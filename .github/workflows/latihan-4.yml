@@ -21,7 +21,7 @@ jobs:
           SECRET_BAYU: ${{ secrets.SECRET_BAYU }}
         run: |
           echo "Nama siswa yang mengisi input: ${{ github.event.inputs.nama_siswa }}"
-          echo "Panjang isi CONTOH_SECRET (bukan isinya): ${#CONTOH_SECRET} karakter"
+          echo "Panjang isi SECRET_BAYU (bukan isinya): ${#SECRET_BAYU} karakter"
 
       - name: Install update & nginx
         run: |
