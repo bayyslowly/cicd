@@ -18,7 +18,7 @@ jobs:
 
       - name: Tampilkan input & secret contoh (nilai secret otomatis disensor di log)
         env:
-          CONTOH_SECRET: ${{ secrets.CONTOH_SECRET }}
+          SECRET_BAYU: ${{ secrets.SECRET_BAYU }}
         run: |
           echo "Nama siswa yang mengisi input: ${{ github.event.inputs.nama_siswa }}"
           echo "Panjang isi CONTOH_SECRET (bukan isinya): ${#CONTOH_SECRET} karakter"
