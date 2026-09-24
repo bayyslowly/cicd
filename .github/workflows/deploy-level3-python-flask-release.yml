@@ -1,21 +1,32 @@
 name: "Skenario 1 - Level 3 - Deploy Flask (release + cron)"
 
-# Trigger: tag rilis v* ATAU jadwal cron harian
+# Trigger:
+# - Push tag v* untuk release
+# - Schedule setiap hari jam 02:00 UTC
 on:
   push:
     tags:
       - 'v*'
+
   schedule:
-    - cron: '0 2 * * *'   # setiap hari jam 02:00 UTC
+    - cron: '0 2 * * *'
 
 jobs:
   deploy:
     name: Deploy Flask app ke VM-A
     runs-on: ubuntu-latest
+
     steps:
+
+      # ==========================================
+      # 1. Checkout repository
+      # ==========================================
       - name: Checkout kode
         uses: actions/checkout@v4
 
+      # ==========================================
+      # 2. Tentukan versi release
+      # ==========================================
       - name: Tentukan versi rilis
         id: ver
         run: |
@@ -25,18 +36,32 @@ jobs:
             echo "version=scheduled-refresh" >> "$GITHUB_OUTPUT"
           fi
 
+      # ==========================================
+      # 3. Install Cloudflare & sshpass
+      # ==========================================
       - name: Install cloudflared & sshpass
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
-          sudo dpkg -i cloudflared.deb
-          sudo apt-get update -y && sudo apt-get install -y sshpass
 
-      - name: Siapkan SSH config (ProxyCommand Cloudflare Access, tanpa SSH key)
+          sudo dpkg -i cloudflared.deb
+
+          sudo apt-get update -y
+          sudo apt-get install -y openssh-client sshpass
+
+          cloudflared --version
+          sshpass -V
+          ssh -V
+
+      # ==========================================
+      # 4. Siapkan SSH config Cloudflare
+      # ==========================================
+      - name: Siapkan SSH config (ProxyCommand Cloudflare Access)
         env:
           CF_ACCESS_HOSTNAME: ${{ secrets.CF_ACCESS_HOSTNAME }}
         run: |
           mkdir -p ~/.ssh
-          cat >> ~/.ssh/config <<EOC
+
+          cat > ~/.ssh/config <<EOC
           Host vm-a
             HostName ${CF_ACCESS_HOSTNAME}
             User ${{ secrets.VPS_USERNAME }}
@@ -45,24 +70,149 @@ jobs:
             UserKnownHostsFile=/dev/null
           EOC
 
+          chmod 600 ~/.ssh/config
+
+      # ==========================================
+      # 5. Test koneksi VM-A
+      # ==========================================
+      - name: Test koneksi SSH VM-A
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo 'SSH ke VM-A berhasil'; hostname; whoami"
+
+      # ==========================================
+      # 6. Install Python jika belum tersedia
+      # ==========================================
+      - name: Siapkan Python dan Virtual Environment
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a "
+            if ! command -v python3 >/dev/null 2>&1; then
+              echo '${SSHPASS}' | sudo -S apt-get update -y
+              echo '${SSHPASS}' | sudo -S apt-get install -y python3 python3-venv python3-pip
+            else
+              echo 'Python3 sudah tersedia'
+            fi
+          "
+
+      # ==========================================
+      # 7. Siapkan folder Flask
+      # ==========================================
+      - name: Siapkan folder aplikasi Flask
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S mkdir -p /opt/level3-flask && echo '${SSHPASS}' | sudo -S chown -R ubuntu:ubuntu /opt/level3-flask"
+
+      # ==========================================
+      # 8. Buat Virtual Environment jika belum ada
+      # ==========================================
+      - name: Buat virtual environment
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a "
+            if [ ! -d /opt/level3-flask/venv ]; then
+              python3 -m venv /opt/level3-flask/venv
+            else
+              echo 'Virtual environment sudah tersedia'
+            fi
+          "
+
+      # ==========================================
+      # 9. Upload kode Flask
+      # ==========================================
       - name: Upload kode Flask ke VM-A
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
-          ssh vm-a "sudo mkdir -p /opt/level3-flask && sudo chown \$USER:\$USER /opt/level3-flask"
           sshpass -e scp -o StrictHostKeyChecking=no \
             skenario1-github-actions-vps-proxycommand/level3-python-flask-release/app/app.py \
             skenario1-github-actions-vps-proxycommand/level3-python-flask-release/app/requirements.txt \
             vm-a:/opt/level3-flask/
 
-      - name: Install dependency & set versi & restart service
+      # ==========================================
+      # 10. Install dependency Flask
+      # ==========================================
+      - name: Install dependency Flask
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "/opt/level3-flask/venv/bin/pip install --upgrade pip && /opt/level3-flask/venv/bin/pip install -r /opt/level3-flask/requirements.txt"
+
+      # ==========================================
+      # 11. Buat systemd service jika belum ada
+      # ==========================================
+      - name: Konfigurasi systemd service Flask
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
           RELEASE_VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          sshpass -e ssh vm-a "
-            /opt/level3-flask/venv/bin/pip install -r /opt/level3-flask/requirements.txt &&
-            sudo sed -i 's/^Environment=APP_VERSION=.*/Environment=APP_VERSION=${RELEASE_VERSION}/' /etc/systemd/system/level3-flask.service &&
-            sudo systemctl daemon-reload &&
-            sudo systemctl restart level3-flask
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a "
+            if [ ! -f /etc/systemd/system/level3-flask.service ]; then
+
+              echo '${SSHPASS}' | sudo -S tee /etc/systemd/system/level3-flask.service > /dev/null <<EOF
+          [Unit]
+          Description=Level 3 Flask Application
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          WorkingDirectory=/opt/level3-flask
+          Environment=APP_VERSION=${RELEASE_VERSION}
+          ExecStart=/opt/level3-flask/venv/bin/python /opt/level3-flask/app.py
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+            else
+              echo 'level3-flask.service sudah tersedia'
+            fi
+
+            echo '${SSHPASS}' | sudo -S sed -i 's/^Environment=APP_VERSION=.*/Environment=APP_VERSION=${RELEASE_VERSION}/' /etc/systemd/system/level3-flask.service
+
+            echo '${SSHPASS}' | sudo -S systemctl daemon-reload
+            echo '${SSHPASS}' | sudo -S systemctl enable level3-flask
           "
+
+      # ==========================================
+      # 12. Restart Flask
+      # ==========================================
+      - name: Restart service level3-flask
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S systemctl restart level3-flask"
+
+      # ==========================================
+      # 13. Cek status service
+      # ==========================================
+      - name: Cek status Flask
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S systemctl status level3-flask --no-pager"
+
+      # ==========================================
+      # 14. Cek proses dan port
+      # ==========================================
+      - name: Cek aplikasi Flask
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "ps aux | grep '[p]ython.*app.py' || true"
+
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "ss -lntp | grep python || true"
