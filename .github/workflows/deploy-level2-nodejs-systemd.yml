@@ -47,7 +47,7 @@ jobs:
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
-          ssh vm-a "sudo mkdir -p /opt/level2-node && sudo chown \$USER:\$USER /opt/level2-node"
+          sshpass vm-a "sudo mkdir -p /opt/level2-node && sudo chown \$USER:\$USER /opt/level2-node"
           sshpass -e scp -o StrictHostKeyChecking=no \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/server.js \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/package.json \
