@@ -20,31 +20,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================
-      # 1. Checkout repository
-      # ==========================================
       - name: Checkout kode
         uses: actions/checkout@v4
 
-      # ==========================================
-      # 2. Install cloudflared & sshpass
-      # ==========================================
       - name: Install cloudflared & sshpass
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
           sudo dpkg -i cloudflared.deb
-
           sudo apt-get update -y
           sudo apt-get install -y sshpass
 
-          cloudflared --version
-          sshpass -V
-
-      # ==========================================
-      # 3. Siapkan SSH config Cloudflare
-      # ==========================================
-      - name: Siapkan SSH config
+      - name: Siapkan SSH config (ProxyCommand Cloudflare Access)
         run: |
           mkdir -p ~/.ssh
 
@@ -59,132 +45,51 @@ jobs:
 
           chmod 600 ~/.ssh/config
 
-      # ==========================================
-      # 4. Test koneksi SSH
-      # ==========================================
-      - name: Test koneksi VM-A
+      - name: Test koneksi SSH
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
           sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
-            "echo 'SSH ke VM-A berhasil'; hostname; whoami"
+            "echo 'SSH ke VM-A berhasil'; node --version; npm --version"
 
-      # ==========================================
-      # 5. Install Node.js di VM-A
-      # ==========================================
-      - name: Install Node.js di VM-A
-        env:
-          SSHPASS: ${{ secrets.VPS_PASSWORD }}
-        run: |
-          sshpass -e ssh -o StrictHostKeyChecking=no vm-a "
-            echo '${SSHPASS}' | sudo -S apt-get update -y &&
-            echo '${SSHPASS}' | sudo -S apt-get install -y nodejs npm
-          "
-
-      # ==========================================
-      # 6. Cek Node.js
-      # ==========================================
-      - name: Cek Node.js
-        env:
-          SSHPASS: ${{ secrets.VPS_PASSWORD }}
-        run: |
-          sshpass -e ssh vm-a "
-            node --version &&
-            npm --version
-          "
-
-      # ==========================================
-      # 7. Buat folder aplikasi
-      # ==========================================
-      - name: Siapkan folder aplikasi
-        if: ${{ github.event.inputs.restart_only != 'true' }}
-        env:
-          SSHPASS: ${{ secrets.VPS_PASSWORD }}
-        run: |
-          sshpass -e ssh vm-a "
-            echo '${SSHPASS}' | sudo -S mkdir -p /opt/level2-node &&
-            echo '${SSHPASS}' | sudo -S chown -R ubuntu:ubuntu /opt/level2-node
-          "
-
-      # ==========================================
-      # 8. Upload aplikasi
-      # ==========================================
       - name: Upload file aplikasi
         if: ${{ github.event.inputs.restart_only != 'true' }}
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S mkdir -p /opt/level2-node && echo '${SSHPASS}' | sudo -S chown -R ubuntu:ubuntu /opt/level2-node"
+
           sshpass -e scp -o StrictHostKeyChecking=no \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/server.js \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/package.json \
             vm-a:/opt/level2-node/
 
-      # ==========================================
-      # 9. Install dependency aplikasi
-      # ==========================================
-      - name: Install dependency Node.js
+      - name: Install dependency aplikasi
         if: ${{ github.event.inputs.restart_only != 'true' }}
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
-          sshpass -e ssh vm-a "
-            cd /opt/level2-node &&
-            npm install
-          "
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "cd /opt/level2-node && npm install"
 
-      # ==========================================
-      # 10. Buat systemd service
-      # ==========================================
-      - name: Konfigurasi systemd service
-        if: ${{ github.event.inputs.restart_only != 'true' }}
-        env:
-          SSHPASS: ${{ secrets.VPS_PASSWORD }}
-        run: |
-          sshpass -e ssh vm-a "
-            echo '${SSHPASS}' | sudo -S tee /etc/systemd/system/level2-node.service > /dev/null <<'EOF'
-          [Unit]
-          Description=Level 2 Node.js Application
-          After=network.target
-
-          [Service]
-          Type=simple
-          User=ubuntu
-          WorkingDirectory=/opt/level2-node
-          ExecStart=/usr/bin/node /opt/level2-node/server.js
-          Restart=always
-          RestartSec=5
-          Environment=NODE_ENV=production
-
-          [Install]
-          WantedBy=multi-user.target
-          EOF
-
-            echo '${SSHPASS}' | sudo -S systemctl daemon-reload
-            echo '${SSHPASS}' | sudo -S systemctl enable level2-node
-          "
-
-      # ==========================================
-      # 11. Restart systemd service
-      # ==========================================
       - name: Restart systemd service level2-node
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
-          sshpass -e ssh vm-a "
-            echo '${SSHPASS}' | sudo -S systemctl restart level2-node
-          "
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S systemctl restart level2-node"
 
-      # ==========================================
-      # 12. Cek status service
-      # ==========================================
-      - name: Cek status aplikasi
+      - name: Cek status systemd service
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
-          sshpass -e ssh vm-a "
-            echo '=== STATUS SYSTEMD ==='
-            echo '${SSHPASS}' | sudo -S systemctl status level2-node --no-pager
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S systemctl status level2-node --no-pager"
 
-            echo '=== PORT LISTENING ==='
-            ss -lntp | grep -E 'node|3000|8080' || true
-          "
+      - name: Cek aplikasi Node.js
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "ss -lntp | grep node || true"
