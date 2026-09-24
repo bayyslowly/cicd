@@ -6,6 +6,7 @@ on:
     branches: [ main ]
     paths:
       - 'skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/**'
+
   workflow_dispatch:
     inputs:
       restart_only:
@@ -18,6 +19,7 @@ jobs:
   deploy:
     name: Deploy Node.js app ke VM-A
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout kode
         uses: actions/checkout@v4
@@ -47,7 +49,9 @@ jobs:
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
-          sshpass -e vm-a "sudo mkdir -p /opt/level2-node && sudo chown \$USER:\$USER /opt/level2-node"
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S mkdir -p /opt/level2-node && echo '${SSHPASS}' | sudo -S chown -R ubuntu:ubuntu /opt/level2-node"
+
           sshpass -e scp -o StrictHostKeyChecking=no \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/server.js \
             skenario1-github-actions-vps-proxycommand/level2-nodejs-systemd/app/package.json \
@@ -57,4 +61,5 @@ jobs:
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
-          sshpass -e ssh vm-a "sudo systemctl restart level2-node && sudo systemctl status level2-node --no-pager"
+          sshpass -e ssh -o StrictHostKeyChecking=no vm-a \
+            "echo '${SSHPASS}' | sudo -S systemctl restart level2-node && echo '${SSHPASS}' | sudo -S systemctl status level2-node --no-pager"
