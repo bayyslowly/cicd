@@ -6,6 +6,8 @@ on:
     branches: [ main ]
     paths:
       - 'skenario1-github-actions-vps-proxycommand/level1-static-html/app/**'
+      
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -37,6 +39,7 @@ jobs:
             StrictHostKeyChecking no
             UserKnownHostsFile=/dev/null
           EOC
+          
       - name: Install Nginx di VM-A
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
