@@ -36,11 +36,13 @@ jobs:
           fi
 
       # ==========================================
-      # 3. Install Cloudflare + SSH tools
+      # 3. Install Cloudflare dan sshpass
       # ==========================================
       - name: Install cloudflared & sshpass
         run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+          curl -L \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb \
+            -o cloudflared.deb
 
           sudo dpkg -i cloudflared.deb
 
@@ -73,9 +75,9 @@ jobs:
           chmod 600 ~/.ssh/config
 
       # ==========================================
-      # 5. Test SSH ke VM-A
+      # 5. Test koneksi SSH
       # ==========================================
-      - name: Test koneksi SSH
+      - name: Test koneksi SSH VM-A
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
@@ -85,27 +87,35 @@ jobs:
             "echo 'SSH ke VM-A berhasil'; hostname; whoami"
 
       # ==========================================
-      # 6. Siapkan Python
+      # 6. Install Python + venv + pip
       # ==========================================
-      - name: Siapkan Python di VM-A
+      - name: Siapkan Python dan venv di VM-A
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
           sshpass -e ssh \
             -o StrictHostKeyChecking=no \
             vm-a "
-              if ! command -v python3 >/dev/null 2>&1; then
-                echo '${SSHPASS}' | sudo -S apt-get update -y
-                echo '${SSHPASS}' | sudo -S apt-get install -y python3 python3-venv python3-pip
-              else
-                echo 'Python3 sudah terinstall'
-              fi
+              echo '${SSHPASS}' | sudo -S apt-get update -y
+
+              echo '${SSHPASS}' | sudo -S apt-get install -y \
+                python3 \
+                python3-venv \
+                python3-pip
+
+              echo '=== PYTHON VERSION ==='
+              python3 --version
+
+              echo '=== VENV CHECK ==='
+              python3 -m venv --help > /dev/null
+
+              echo 'Python dan python3-venv siap'
             "
 
       # ==========================================
-      # 7. Siapkan folder Flask
+      # 7. Siapkan folder aplikasi
       # ==========================================
-      - name: Siapkan folder aplikasi
+      - name: Siapkan folder Flask
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
         run: |
@@ -113,11 +123,14 @@ jobs:
             -o StrictHostKeyChecking=no \
             vm-a "
               echo '${SSHPASS}' | sudo -S mkdir -p /opt/level3-flask
-              echo '${SSHPASS}' | sudo -S chown -R ubuntu:ubuntu /opt/level3-flask
+
+              echo '${SSHPASS}' | sudo -S chown -R \
+                ubuntu:ubuntu \
+                /opt/level3-flask
             "
 
       # ==========================================
-      # 8. Buat Python Virtual Environment
+      # 8. Buat virtual environment
       # ==========================================
       - name: Buat virtual environment
         env:
@@ -126,11 +139,15 @@ jobs:
           sshpass -e ssh \
             -o StrictHostKeyChecking=no \
             vm-a "
-              if [ ! -d /opt/level3-flask/venv ]; then
-                python3 -m venv /opt/level3-flask/venv
-              else
-                echo 'Virtual environment sudah tersedia'
-              fi
+              rm -rf /opt/level3-flask/venv
+
+              python3 -m venv /opt/level3-flask/venv
+
+              echo '=== VENV PYTHON ==='
+              /opt/level3-flask/venv/bin/python --version
+
+              echo '=== VENV PIP ==='
+              /opt/level3-flask/venv/bin/pip --version
             "
 
       # ==========================================
@@ -157,7 +174,9 @@ jobs:
             -o StrictHostKeyChecking=no \
             vm-a "
               /opt/level3-flask/venv/bin/pip install --upgrade pip
-              /opt/level3-flask/venv/bin/pip install -r /opt/level3-flask/requirements.txt
+
+              /opt/level3-flask/venv/bin/pip install \
+                -r /opt/level3-flask/requirements.txt
             "
 
       # ==========================================
@@ -173,7 +192,9 @@ jobs:
             vm-a "
               if [ ! -f /etc/systemd/system/level3-flask.service ]; then
 
-                echo '${SSHPASS}' | sudo -S tee /etc/systemd/system/level3-flask.service > /dev/null <<EOF
+                echo '${SSHPASS}' | sudo -S tee \
+                  /etc/systemd/system/level3-flask.service > /dev/null <<EOF
+
           [Unit]
           Description=Level 3 Flask Application
           After=network.target
@@ -189,6 +210,7 @@ jobs:
 
           [Install]
           WantedBy=multi-user.target
+
           EOF
 
               else
@@ -200,11 +222,12 @@ jobs:
                 /etc/systemd/system/level3-flask.service
 
               echo '${SSHPASS}' | sudo -S systemctl daemon-reload
+
               echo '${SSHPASS}' | sudo -S systemctl enable level3-flask
             "
 
       # ==========================================
-      # 12. Restart Flask
+      # 12. Restart service Flask
       # ==========================================
       - name: Restart service level3-flask
         env:
@@ -238,3 +261,15 @@ jobs:
             -o StrictHostKeyChecking=no \
             vm-a \
             "ss -lntp | grep -E 'python|flask' || true"
+
+      # ==========================================
+      # 15. Cek aplikasi secara lokal
+      # ==========================================
+      - name: Test aplikasi Flask
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=no \
+            vm-a \
+            "curl -I http://127.0.0.1:5000 || true"
