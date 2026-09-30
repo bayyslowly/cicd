@@ -15,7 +15,7 @@ on:
 jobs:
   deploy:
     name: Deploy Node.js app (pm2) langsung di VM-B
-    runs-on: [self-hosted, vm-b]
+    runs-on: [self-hosted]
     steps:
       - name: Checkout kode
         uses: actions/checkout@v4
