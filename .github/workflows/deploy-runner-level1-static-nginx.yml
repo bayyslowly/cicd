@@ -9,7 +9,7 @@ on:
 jobs:
   deploy:
     name: Deploy static site langsung di VM-B
-    runs-on: [self-hosted, vm-b]
+    runs-on: [self-hosted]
     steps:
       - name: Checkout kode
         uses: actions/checkout@v4
