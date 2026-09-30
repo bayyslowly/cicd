@@ -14,6 +14,20 @@ jobs:
       - name: Checkout kode
         uses: actions/checkout@v4
 
+      - name: Install dan Jalankan Cloudflare Tunnel
+      run: |
+        # Instal cloudflared jika belum ada
+        curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+        sudo dpkg -i cloudflared.deb
+        
+        # Jalankan tunnel di background agar workflow tidak macet
+        nohup cloudflared tunnel --url http://localhost:80 > cloudflare.log 2>&1 &
+        
+        # Tunggu 3 detik lalu ambil URL publiknya ke log GitHub
+        sleep 3
+        echo "=== URL PUBLIC CLOUDFLARE KAMU ==="
+        grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' cloudflare.log || echo "URL sedang dibuat, cek log VM"
+
       - name: Salin file ke web root Nginx (lokal, tanpa SSH)
         run: |
           sudo mkdir -p /var/www/level1-static
@@ -22,4 +36,5 @@ jobs:
 
       - name: Reload Nginx
         run: sudo systemctl reload nginx
+      
 
