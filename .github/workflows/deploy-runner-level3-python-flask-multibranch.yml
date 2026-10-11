@@ -2,40 +2,107 @@ name: "Skenario 2 - Level 3 - Deploy Flask multi-branch (self-hosted VM-B)"
 
 on:
   push:
-    branches: [ main, staging ]
+    branches:
+      - main
+      - staging
     paths:
-      - 'skenario2-self-hosted-runner/level3-python-flask-multibranch/app/**'
+      - "skenario2-self-hosted-runner/level3-python-flask-multibranch/app/**"
+      - ".github/workflows/deploy-runner-level3-flask-multibranch.yml"
+
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Pilih branch deployment"
+        required: true
+        type: choice
+        options:
+          - main
+          - staging
+
   schedule:
-    - cron: '0 3 * * 1'   # setiap Senin jam 03:00 UTC
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
-    name: Deploy Flask app langsung di VM-B
-    runs-on: [self-hosted, vm-b]
+    name: Deploy Flask langsung di VM-B
+    runs-on: self-hosted
+
     steps:
       - name: Checkout kode
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || github.ref }}
 
-      - name: Tentukan target folder sesuai branch
+      - name: Tentukan target branch
         id: target
+        shell: bash
+        env:
+          SELECTED_BRANCH: ${{ inputs.branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "${GITHUB_REF_NAME}" == "staging" ]]; then
-            echo "dir=/opt/level3-flask-vmb/staging" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            BRANCH="$SELECTED_BRANCH"
           else
-            echo "dir=/opt/level3-flask-vmb/main" >> "$GITHUB_OUTPUT"
+            BRANCH="$REF_NAME"
           fi
 
-      - name: Salin kode Flask (lokal, tanpa SSH)
-        run: |
-          mkdir -p "${{ steps.target.outputs.dir }}"
-          cp skenario2-self-hosted-runner/level3-python-flask-multibranch/app/app.py "${{ steps.target.outputs.dir }}/"
-          cp skenario2-self-hosted-runner/level3-python-flask-multibranch/app/requirements.txt "${{ steps.target.outputs.dir }}/"
+          case "$BRANCH" in
+            main|staging)
+              echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+              echo "dir=/opt/level3-flask-vmb/$BRANCH" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Branch tidak didukung: $BRANCH"
+              exit 1
+              ;;
+          esac
 
-      - name: Install dependency & restart service
-        env:
-          DEPLOY_BRANCH: ${{ github.ref_name }}
+          echo "Deployment target: $BRANCH"
+
+      - name: Validasi file aplikasi
         run: |
-          /opt/level3-flask-vmb/venv/bin/pip install -r "${{ steps.target.outputs.dir }}/requirements.txt"
-          sudo sed -i "s#^WorkingDirectory=.*#WorkingDirectory=${{ steps.target.outputs.dir }}#" /etc/systemd/system/level3-flask-vmb.service
-          sudo systemctl daemon-reload
-          sudo systemctl restart level3-flask-vmb
+          test -f skenario2-self-hosted-runner/level3-python-flask-multibranch/app/app.py
+          test -f skenario2-self-hosted-runner/level3-python-flask-multibranch/app/requirements.txt
+
+      - name: Salin kode Flask
+        env:
+          TARGET_DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          mkdir -p "$TARGET_DIR"
+
+          cp skenario2-self-hosted-runner/level3-python-flask-multibranch/app/app.py \
+             "$TARGET_DIR/app.py"
+
+          cp skenario2-self-hosted-runner/level3-python-flask-multibranch/app/requirements.txt \
+             "$TARGET_DIR/requirements.txt"
+
+      - name: Install dependency Python
+        env:
+          TARGET_DIR: ${{ steps.target.outputs.dir }}
+        run: |
+          /opt/level3-flask-vmb/venv/bin/python -m pip install \
+            -r "$TARGET_DIR/requirements.txt"
+
+          /opt/level3-flask-vmb/venv/bin/python -m pip install \
+            "gunicorn==22.0.0"
+
+      - name: Deploy dan restart Flask
+        env:
+          DEPLOY_BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          sudo -n /usr/local/sbin/deploy-level3-flask-vmb "$DEPLOY_BRANCH"
+
+      - name: Verifikasi deployment
+        run: |
+          sudo -n systemctl is-active level3-flask-vmb
+
+          curl --fail --silent --show-error \
+            --retry 5 \
+            --retry-delay 2 \
+            http://127.0.0.1:5100/
+
+          echo
