@@ -2,29 +2,48 @@
 name: "Skenario 2 - Level 2 - Deploy Node.js PM2 (self-hosted VM-B)"
 
 on:
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'skenario2-self-hosted-runner/level2-nodejs-pm2/app/**'
-
   workflow_dispatch:
     inputs:
       port:
-        description: 'Port yang dipakai aplikasi'
+        description: "Port aplikasi Node.js"
         required: true
-        default: '4100'
+        default: "4100"
         type: string
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "skenario2-self-hosted-runner/level2-nodejs-pm2/app/**"
+      - ".github/workflows/deploy-runner-level2-nodejs-pm2.yml"
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
-    name: Deploy Node.js app (PM2) langsung di VM-B
+    name: Deploy Node.js dengan PM2
     runs-on: self-hosted
+
+    env:
+      APP_DIR: /opt/level2-node-pm2
+      APP_PORT: ${{ inputs.port || '4100' }}
 
     steps:
       - name: Checkout kode
         uses: actions/checkout@v4
 
-      - name: Cek Node.js dan PM2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: ""
+
+      - name: Install PM2
+        run: |
+          npm install --global pm2
+
+      - name: Verifikasi tools
         run: |
           node --version
           npm --version
@@ -35,26 +54,24 @@ jobs:
           test -f skenario2-self-hosted-runner/level2-nodejs-pm2/app/server.js
           test -f skenario2-self-hosted-runner/level2-nodejs-pm2/app/package.json
 
-      - name: Siapkan folder aplikasi
+      - name: Siapkan direktori aplikasi
         run: |
-          sudo mkdir -p /opt/level2-node-pm2
-          sudo chown -R "$(whoami):$(id -gn)" /opt/level2-node-pm2
+          sudo mkdir -p "$APP_DIR"
+          sudo chown -R "$(whoami):$(id -gn)" "$APP_DIR"
 
       - name: Salin file aplikasi
         run: |
-          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/server.js /opt/level2-node-pm2/
-          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/package.json /opt/level2-node-pm2/
+          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/server.js "$APP_DIR/"
+          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/package.json "$APP_DIR/"
 
       - name: Install dependency aplikasi
         run: |
-          cd /opt/level2-node-pm2
+          cd "$APP_DIR"
           npm install --omit=dev
 
-      - name: Restart dengan PM2
-        env:
-          APP_PORT: ${{ inputs.port || '4100' }}
+      - name: Jalankan atau restart aplikasi
         run: |
-          cd /opt/level2-node-pm2
+          cd "$APP_DIR"
 
           if pm2 describe level2-node-pm2 >/dev/null 2>&1; then
             PORT="$APP_PORT" pm2 restart level2-node-pm2 --update-env
@@ -67,9 +84,9 @@ jobs:
           pm2 save
 
       - name: Verifikasi aplikasi
-        env:
-          APP_PORT: ${{ inputs.port || '4100' }}
         run: |
           pm2 status
-          echo "Aplikasi dikonfigurasi pada port ${APP_PORT}"
-          ss -lntp | grep ":${APP_PORT}" || true
+          echo "Memeriksa aplikasi pada port $APP_PORT"
+          curl --fail --retry 5 --retry-delay 2 \
+            "http://127.0.0.1:${APP_PORT}/"
+            
