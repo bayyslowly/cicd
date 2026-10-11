@@ -1,4 +1,3 @@
-```yaml
 name: "Skenario 2 - Level 2 - Deploy Node.js PM2 (self-hosted VM-B)"
 
 on:
@@ -15,7 +14,6 @@ on:
       - main
     paths:
       - "skenario2-self-hosted-runner/level2-nodejs-pm2/app/**"
-      - ".github/workflows/deploy-runner-level2-nodejs-pm2.yml"
 
 permissions:
   contents: read
@@ -25,10 +23,6 @@ jobs:
     name: Deploy Node.js dengan PM2
     runs-on: self-hosted
 
-    env:
-      APP_DIR: /opt/level2-node-pm2
-      APP_PORT: ${{ inputs.port || '4100' }}
-
     steps:
       - name: Checkout kode
         uses: actions/checkout@v4
@@ -37,7 +31,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: ""
 
       - name: Install PM2
         run: |
@@ -56,37 +49,37 @@ jobs:
 
       - name: Siapkan direktori aplikasi
         run: |
-          sudo mkdir -p "$APP_DIR"
-          sudo chown -R "$(whoami):$(id -gn)" "$APP_DIR"
+          sudo mkdir -p /opt/level2-node-pm2
+          sudo chown -R "$(whoami):$(id -gn)" /opt/level2-node-pm2
 
       - name: Salin file aplikasi
         run: |
-          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/server.js "$APP_DIR/"
-          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/package.json "$APP_DIR/"
+          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/server.js /opt/level2-node-pm2/
+          cp skenario2-self-hosted-runner/level2-nodejs-pm2/app/package.json /opt/level2-node-pm2/
 
       - name: Install dependency aplikasi
         run: |
-          cd "$APP_DIR"
+          cd /opt/level2-node-pm2
           npm install --omit=dev
 
       - name: Jalankan atau restart aplikasi
+        env:
+          APP_PORT: ${{ inputs.port || '4100' }}
         run: |
-          cd "$APP_DIR"
+          cd /opt/level2-node-pm2
 
           if pm2 describe level2-node-pm2 >/dev/null 2>&1; then
             PORT="$APP_PORT" pm2 restart level2-node-pm2 --update-env
           else
-            PORT="$APP_PORT" pm2 start server.js \
-              --name level2-node-pm2 \
-              --update-env
+            PORT="$APP_PORT" pm2 start server.js --name level2-node-pm2
           fi
 
           pm2 save
 
       - name: Verifikasi aplikasi
+        env:
+          APP_PORT: ${{ inputs.port || '4100' }}
         run: |
           pm2 status
-          echo "Memeriksa aplikasi pada port $APP_PORT"
           curl --fail --retry 5 --retry-delay 2 \
             "http://127.0.0.1:${APP_PORT}/"
-            
