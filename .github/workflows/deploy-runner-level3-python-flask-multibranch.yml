@@ -1,4 +1,4 @@
-name: "Skenario 2 - Level 3 - Deploy Flask multi-branch (self-hosted VM-B)"
+name: Deploy Flask langsung di VM-B
 
 on:
   push:
@@ -6,13 +6,13 @@ on:
       - main
       - staging
     paths:
-      - "skenario2-self-hosted-runner/level3-python-flask-multibranch/app/**"
+      - "skenario2-self-hosted-runner/level3-python-flask-multibranch/**"
       - ".github/workflows/deploy-runner-level3-flask-multibranch.yml"
 
   workflow_dispatch:
     inputs:
       branch:
-        description: "Pilih branch deployment"
+        description: "Branch yang akan di-deploy"
         required: true
         type: choice
         options:
@@ -25,84 +25,139 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: level3-flask-vm-b
+  cancel-in-progress: false
+
 jobs:
   deploy:
-    name: Deploy Flask langsung di VM-B
+    name: Deploy Flask ke VM-B
     runs-on: self-hosted
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout kode
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.branch || github.ref }}
-
-      - name: Tentukan target branch
+      - name: Tentukan branch deployment
         id: target
         shell: bash
         env:
-          SELECTED_BRANCH: ${{ inputs.branch }}
           EVENT_NAME: ${{ github.event_name }}
+          INPUT_BRANCH: ${{ inputs.branch }}
           REF_NAME: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            BRANCH="$SELECTED_BRANCH"
+            BRANCH="$INPUT_BRANCH"
           else
             BRANCH="$REF_NAME"
           fi
 
           case "$BRANCH" in
-            main|staging)
-              echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-              echo "dir=/opt/level3-flask-vmb/$BRANCH" >> "$GITHUB_OUTPUT"
-              ;;
+            main|staging) ;;
             *)
-              echo "Branch tidak didukung: $BRANCH"
+              echo "Branch tidak valid: $BRANCH"
               exit 1
               ;;
           esac
 
-          echo "Deployment target: $BRANCH"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Branch deployment: $BRANCH"
+
+      - name: Checkout kode
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.branch }}
+          persist-credentials: false
 
       - name: Validasi file aplikasi
-        run: |
-          test -f skenario2-self-hosted-runner/level3-python-flask-multibranch/app/app.py
-          test -f skenario2-self-hosted-runner/level3-python-flask-multibranch/app/requirements.txt
-
-      - name: Salin kode Flask
-        env:
-          TARGET_DIR: ${{ steps.target.outputs.dir }}
-        run: |
-          mkdir -p "$TARGET_DIR"
-
-          cp skenario2-self-hosted-runner/level3-python-flask-multibranch/app/app.py \
-             "$TARGET_DIR/app.py"
-
-          cp skenario2-self-hosted-runner/level3-python-flask-multibranch/app/requirements.txt \
-             "$TARGET_DIR/requirements.txt"
-
-      - name: Install dependency Python
-        env:
-          TARGET_DIR: ${{ steps.target.outputs.dir }}
-        run: |
-          /opt/level3-flask-vmb/venv/bin/python -m pip install \
-            -r "$TARGET_DIR/requirements.txt"
-
-          /opt/level3-flask-vmb/venv/bin/python -m pip install \
-            "gunicorn==22.0.0"
-
-      - name: Deploy dan restart Flask
+        shell: bash
         env:
           DEPLOY_BRANCH: ${{ steps.target.outputs.branch }}
         run: |
-          sudo -n /usr/local/sbin/deploy-level3-flask-vmb "$DEPLOY_BRANCH"
+          set -euo pipefail
+
+          APP_DIR="skenario2-self-hosted-runner/level3-python-flask-multibranch/app"
+
+          test -f "$APP_DIR/app.py"
+          test -f "$APP_DIR/requirements.txt"
+
+          echo "File aplikasi ditemukan."
+          echo "Branch: $DEPLOY_BRANCH"
+
+      - name: Salin aplikasi ke VM-B
+        shell: bash
+        env:
+          DEPLOY_BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          APP_DIR="$GITHUB_WORKSPACE/skenario2-self-hosted-runner/level3-python-flask-multibranch/app"
+          TARGET="/opt/level3-flask-vmb/$DEPLOY_BRANCH"
+
+          mkdir -p "$TARGET"
+
+          install -o ubuntu -g ubuntu -m 644 \
+            "$APP_DIR/app.py" "$TARGET/app.py"
+
+          install -o ubuntu -g ubuntu -m 644 \
+            "$APP_DIR/requirements.txt" "$TARGET/requirements.txt"
+
+          echo "Aplikasi disalin ke $TARGET"
+
+      - name: Install dependency Python
+        shell: bash
+        env:
+          DEPLOY_BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          VENV="/opt/level3-flask-vmb/venv"
+          REQUIREMENTS="/opt/level3-flask-vmb/$DEPLOY_BRANCH/requirements.txt"
+
+          "$VENV/bin/python" -m pip install \
+            --disable-pip-version-check \
+            -r "$REQUIREMENTS"
+
+      - name: Deploy dan restart Flask
+        shell: bash
+        env:
+          DEPLOY_BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          sudo -n bash \
+            /usr/local/sbin/deploy-level3-flask-vmb \
+            "$DEPLOY_BRANCH"
 
       - name: Verifikasi deployment
+        shell: bash
+        env:
+          DEPLOY_BRANCH: ${{ steps.target.outputs.branch }}
         run: |
-          sudo -n systemctl is-active level3-flask-vmb
+          set -euo pipefail
 
-          curl --fail --silent --show-error \
-            --retry 5 \
-            --retry-delay 2 \
-            http://127.0.0.1:5100/
+          echo "Memeriksa service Flask..."
 
-          echo
+          for i in {1..15}; do
+            if systemctl is-active --quiet level3-flask-vmb &&
+               curl --fail --silent --show-error \
+                 --max-time 3 http://127.0.0.1:5100/ \
+                 -o /tmp/level3-flask-response.json; then
+
+              echo "Respons aplikasi:"
+              cat /tmp/level3-flask-response.json
+              echo
+
+              echo "Deployment branch $DEPLOY_BRANCH berhasil."
+              exit 0
+            fi
+
+            echo "Flask belum siap, percobaan $i/15..."
+            sleep 2
+          done
+
+          echo "Verifikasi Flask gagal."
+          sudo journalctl -u level3-flask-vmb \
+            -n 40 --no-pager || true
+
+          exit 1
